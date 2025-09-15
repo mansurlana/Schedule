@@ -3,33 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <title>PROGRESS NEW VARIANT ENGP2</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <!-- XLSX dari CDN -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
-  <!-- Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js"></script>
   <style>
     body { font-family: sans-serif; background:#f9fafb; padding:20px; margin:0; }
-    h1 { text-align:center; font-weight:bold; text-transform:uppercase; margin-bottom:20px; font-size:32px; }
+    h1 { text-align:center; font-weight:bold; text-transform:uppercase; margin-bottom:20px; font-size:48px; }
     table { border-collapse:collapse; width:100%; background:#fff; }
     th, td { border:1px solid #ccc; padding:4px; text-align:center; vertical-align:middle; }
-    th { background:#f1f1f1; }
-
-    /* sticky header 2 baris */
-    thead tr:first-child th {
-      position: sticky;
-      top: 0;
-      z-index: 6;
-      background:#f1f1f1;
-    }
-    thead tr:nth-child(2) th {
-      position: sticky;
-      top: 32px;
-      z-index: 5;
-      background:#f1f1f1;
-    }
-
+    th { background:#f1f1f1; position:sticky; top:0; z-index:2; }
     .holiday { background:#fdd; color:#a00; }
     .group { position:relative; }
     .group select { position:absolute; inset:0; opacity:0; cursor:pointer; }
@@ -43,15 +25,9 @@
     .purple { background:#7e22ce; color:#fff; }
 
     /* sticky kiri */
-    .sticky-col, .sticky-col-2, .sticky-col-3 {
-      position: sticky;
-      background:#f9fafb;
-      z-index: 7;
-      box-shadow: 2px 0 3px rgba(0,0,0,0.1);
-    }
-    .sticky-col { left:0; }
-    .sticky-col-2 { left:40px; }
-    .sticky-col-3 { left:160px; }
+    .sticky-col { position:sticky; left:0; background:#f9fafb; z-index:3; }
+    .sticky-col-2 { position:sticky; left:40px; background:#f9fafb; z-index:3; }
+    .sticky-col-3 { position:sticky; left:160px; background:#f9fafb; z-index:3; }
 
     td input {
       width:100%; box-sizing:border-box; text-align:center;
@@ -69,6 +45,7 @@
     .cell-ASS  { background:#fde68a; font-weight:bold; }
     .cell-D    { background:#bbf7d0; font-weight:bold; }
 
+    /* highlight ISP kalau ada Delivery */
     .isp-delivered { background:#bbf7d0 !important; font-weight:bold; }
   </style>
 </head>
@@ -83,13 +60,13 @@
 
   <button onclick="addRow()" class="btn blue">Tambah Baris</button>
   <button onclick="deleteLastRow()" class="btn red">Hapus Baris Terakhir</button>
-  <button onclick="saveDataOnline()" class="btn green">Save Online</button>
-  <button onclick="loadDataOnline()" class="btn blue">Load Online</button>
+  <button onclick="saveData()" class="btn green">Save</button>
   <button onclick="exportExcel()" class="btn yellow">Export Excel</button>
   <label class="btn purple">
     Import Excel
     <input type="file" id="importFile" style="display:none" onchange="importExcel(event)">
   </label>
+
   <button onclick="hideCheckedRows()" class="btn red">Hide Centang</button>
   <button onclick="unhideCheckedRows()" class="btn green">Unhide Centang</button>
 </div>
@@ -100,65 +77,248 @@
 
 <div id="hiddenList" style="margin-top:10px;"></div>
 <p id="avgLeadtime" style="font-weight:bold; margin-top:10px;"></p>
+
 <p><b>Note:</b> PT => Potong, LTL => Long Taper, SH => Shearing, HT => Heating, PA => Pre Assy, 
 AS => Assy, FG => Finish Good, ASS => Assessment, D => Delivery</p>
 
 <script>
-/* === Konfigurasi Firebase (ganti dengan punya Anda) === */
-const firebaseConfig = {
-  apiKey: "AIzaSyXXXXXXX",
-  authDomain: "yourproject.firebaseapp.com",
-  projectId: "yourproject",
-  storageBucket: "yourproject.appspot.com",
-  messagingSenderId: "1234567890",
-  appId: "1:1234567890:web:abcdef123456"
-};
-
-// Init Firebase
-firebase.initializeApp(firebaseConfig);
-const db = firebase.firestore();
-
-/* === Data & fungsi utama (ringkas dari versi Anda) === */
 const options = ["", "PT", "LTL", "SH", "HT", "PA", "AS", "FG", "ASS", "D"];
 const holidays = new Set(["2025-01-01","2025-08-17"]);
 let rows = Array.from({length:10}).map((_,i)=>({id:i+1, isp:"", qty:"", remark:"", leadtime:0, hidden:false}));
 let data = {};
 let currentMonth = new Date(new Date().getFullYear(), new Date().getMonth(),1);
 
-/* fungsi daysInMonth, formatDateKey, dll sama persis */
 function daysInMonth(y,m){return new Date(y,m+1,0).getDate();}
 function formatDateKey(d){return d.toISOString().slice(0,10);}
 function isSunday(d){return d.getDay()===0;}
 function isHoliday(d){return holidays.has(formatDateKey(d));}
 function twoDigit(n){return n.toString().padStart(2,'0');}
 
-function render(){ /* isi render tabel sama seperti versi sebelumnya */ }
-
-/* === Firebase Save / Load === */
-async function saveDataOnline(){
-  await db.collection("progress").doc("main").set({
-    rows,
-    data,
-    currentMonth: currentMonth.toISOString()
+function getCheckedIds() {
+  let ids = [];
+  document.querySelectorAll(".row-check:checked").forEach(cb=>{
+    ids.push(parseInt(cb.dataset.id));
   });
-  alert("✅ Data tersimpan ke Firebase!");
+  return ids;
+}
+function restoreChecked(ids) {
+  ids.forEach(id=>{
+    let cb = document.querySelector(`.row-check[data-id="${id}"]`);
+    if(cb) cb.checked = true;
+  });
 }
 
-async function loadDataOnline(){
-  const snap = await db.collection("progress").doc("main").get();
-  if(snap.exists){
-    const parsed=snap.data();
-    rows=parsed.rows || rows;
-    data=parsed.data || data;
-    currentMonth=new Date(parsed.currentMonth)||currentMonth;
-    render();
-    alert("📥 Data berhasil dimuat dari Firebase!");
+function render(){
+  let lastChecked = getCheckedIds();
+  const table=document.getElementById("scheduleTable");
+  table.innerHTML="";
+  const year=currentMonth.getFullYear();
+  const month=currentMonth.getMonth();
+  const days=daysInMonth(year,month);
+  const dates=Array.from({length:days}).map((_,i)=>new Date(year,month,i+1));
+  document.getElementById("monthLabel").textContent=currentMonth.toLocaleString("default",{month:"long"})+" "+year;
+
+  // header
+  let thead=`<thead><tr>
+  <th rowspan="2" class="sticky-col">Check</th>
+  <th rowspan="2">No</th>
+  <th rowspan="2" class="sticky-col-2">Isp Code</th>
+  <th rowspan="2" class="sticky-col-3">Qty</th>
+  <th rowspan="2">P/A</th>
+  <th colspan="${days}">${currentMonth.toLocaleString("default",{month:"long"})+" "+year}</th>
+  <th rowspan="2">Remark</th>
+  <th rowspan="2">Lead Time</th>
+  <th rowspan="2">Remove</th></tr><tr>`;
+  dates.forEach(d=>{
+    const cls=(isSunday(d)||isHoliday(d))?"holiday":"";
+    thead+=`<th class="${cls} date-col">${twoDigit(d.getDate())}</th>`;
+  });
+  thead+="</tr></thead>";
+  table.innerHTML+=thead;
+
+  // body
+  let tbody="<tbody>";
+  rows.forEach(row=>{
+    if(row.hidden) return;
+    let count=0;
+    if(data[row.id]){
+      Object.values(data[row.id]).forEach(e=>{if(e.actual)count++;});
+    }
+    row.leadtime=count;
+
+    let hasDelivery = Object.entries(data[row.id] || {}).some(([key, val])=>{
+      const d=new Date(key);
+      return d.getFullYear()===year && d.getMonth()===month && val.actual==="D";
+    });
+    let ispClass = hasDelivery ? "isp-delivered" : "";
+
+    // plan row
+    tbody+=`<tr>
+    <td rowspan="2" class="sticky-col"><input type="checkbox" class="row-check" data-id="${row.id}"></td>
+    <td rowspan="2">${row.id}</td>
+    <td rowspan="2" class="sticky-col-2 ${ispClass}"><input value="${row.isp}" oninput="rows.find(r=>r.id==${row.id}).isp=this.value" onpaste="handlePaste(event,${row.id},'isp')"></td>
+    <td rowspan="2" class="sticky-col-3"><input type="number" value="${row.qty}" oninput="rows.find(r=>r.id==${row.id}).qty=this.value" onpaste="handlePaste(event,${row.id},'qty')"></td>
+    <td>Plan</td>`;
+    dates.forEach(d=>{
+      const key=formatDateKey(d);
+      const val=data[row.id]?.[key]?.plan||"";
+      const cls=(isSunday(d)||isHoliday(d))?"holiday":"";
+      const colorCls=val?"cell-"+val:"";
+      tbody+=`<td class="group date-col ${cls} ${colorCls}">
+        <div>${val||"-"}</div>
+        <select onchange="handleCellChange(${row.id},'${key}','plan',this.value)">`+options.map(o=>`<option ${o==val?"selected":""}>${o}</option>`).join("")+`</select>
+      </td>`;
+    });
+    tbody+=`<td rowspan="2"><input value="${row.remark}" oninput="rows.find(r=>r.id==${row.id}).remark=this.value" onpaste="handlePaste(event,${row.id},'remark')"></td>
+    <td rowspan="2">${row.leadtime}</td>
+    <td rowspan="2"><button onclick="deleteRow(${row.id})" class="btn red">X</button></td></tr>`;
+
+    // actual row
+    tbody+=`<tr><td>Actual</td>`;
+    dates.forEach(d=>{
+      const key=formatDateKey(d);
+      const val=data[row.id]?.[key]?.actual||"";
+      const cls=(isSunday(d)||isHoliday(d))?"holiday":"";
+      const colorCls=val?"cell-"+val:"";
+      tbody+=`<td class="group date-col ${cls} ${colorCls}">
+        <div>${val||"-"}</div>
+        <select onchange="handleCellChange(${row.id},'${key}','actual',this.value)">`+options.map(o=>`<option ${o==val?"selected":""}>${o}</option>`).join("")+`</select>
+      </td>`;
+    });
+    tbody+="</tr>";
+  });
+  tbody+="</tbody>";
+  table.innerHTML+=tbody;
+
+  calculateAverageLeadtime();
+  restoreChecked(lastChecked);
+
+  let hiddenDiv = document.getElementById("hiddenList");
+  let hiddenRows = rows.filter(r=>r.hidden);
+  if(hiddenRows.length){
+    hiddenDiv.innerHTML = "<b>Baris Tersembunyi:</b><br>" +
+      hiddenRows.map(r=>`
+        <label><input type="checkbox" class="hidden-check" data-id="${r.id}"> Row ${r.id} (ISP: ${r.isp || "-"})</label>
+      `).join("<br>");
   } else {
-    alert("⚠️ Belum ada data di Firebase.");
+    hiddenDiv.innerHTML = "";
   }
 }
 
-/* fungsi lain: addRow, deleteRow, handleCellChange, dll sama */
+function calculateAverageLeadtime() {
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+  let selected = [];
+  rows.forEach(row => {
+    const hasD = Object.entries(data[row.id] || {})
+      .some(([key, val]) => {
+        const d = new Date(key);
+        return d.getFullYear() === year && d.getMonth() === month && val.actual === "D";
+      });
+    if (hasD) selected.push(row.leadtime);
+  });
+  if (selected.length) {
+    const avg = (selected.reduce((a, b) => a + b, 0) / selected.length).toFixed(2);
+    document.getElementById("avgLeadtime").textContent =
+      "Lead Time Average (Delivery) : " + avg;
+  } else {
+    document.getElementById("avgLeadtime").textContent =
+      "Lead Time Average (Delivery) : -";
+  }
+}
+
+function handleCellChange(rowId,dateKey,type,val){
+  if(!data[rowId])data[rowId]={};
+  if(!data[rowId][dateKey])data[rowId][dateKey]={};
+  data[rowId][dateKey][type]=val;
+  saveData();
+  render();
+}
+
+function addRow(){const id=rows.length?Math.max(...rows.map(r=>r.id))+1:1;rows.push({id,isp:"",qty:"",remark:"",leadtime:0,hidden:false});saveData();render();}
+function deleteRow(id){rows=rows.filter(r=>r.id!=id); delete data[id]; saveData();render();}
+function deleteLastRow(){if(rows.length){deleteRow(rows[rows.length-1].id);} }
+function prevMonth(){currentMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth()-1,1); render();}
+function nextMonth(){currentMonth=new Date(currentMonth.getFullYear(),currentMonth.getMonth()+1,1); render();}
+function handlePaste(e,rowId,field){
+  e.preventDefault();
+  const txt=e.clipboardData.getData("text/plain");
+  const lines=txt.split(/\r?\n/).map(l=>l.split(/\t/));
+  let idx=rows.findIndex(r=>r.id==rowId);
+  lines.forEach(cols=>{
+    if(idx>=rows.length){addRow();}
+    if(idx<rows.length){
+      if(field==="isp" && cols[0]!=null)rows[idx].isp=cols[0];
+      if(field==="qty" && cols[0]!=null)rows[idx].qty=cols[0];
+      if(field==="remark" && cols[0]!=null)rows[idx].remark=cols[0];
+      idx++;
+    }
+  });
+  saveData();
+  render();
+}
+
+function hideCheckedRows(){
+  let ids = getCheckedIds();
+  ids.forEach(id=>{
+    let r = rows.find(r=>r.id===id);
+    if(r && !r.hidden){ r.hidden = true; }
+  });
+  saveData();
+  render();
+}
+function unhideCheckedRows(){
+  let ids = getCheckedIds();
+  document.querySelectorAll(".hidden-check:checked").forEach(cb=>{
+    ids.push(parseInt(cb.dataset.id));
+  });
+  ids.forEach(id=>{
+    let r = rows.find(r=>r.id===id);
+    if(r && r.hidden){ r.hidden = false; }
+  });
+  saveData();
+  render();
+}
+
+// ================== FIREBASE SYNC ==================
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const docRef = db.collection("schedule").doc("engp2");
+
+async function saveData(){
+  const payload = {
+    rows,
+    data,
+    currentMonth: currentMonth.toISOString()
+  };
+  try {
+    await docRef.set(payload);
+    localStorage.setItem("scheduleData", JSON.stringify(payload));
+    console.log("Data tersimpan ke cloud!");
+  } catch (e) {
+    console.error("Save error", e);
+  }
+}
+
+docRef.onSnapshot((doc) => {
+  if(doc.exists){
+    const saved = doc.data();
+    rows = saved.rows || rows;
+    data = saved.data || data;
+    currentMonth = saved.currentMonth ? new Date(saved.currentMonth) : currentMonth;
+    console.log("Update dari cloud, render ulang");
+    render();
+  }
+});
+
+window.onload = ()=>{
+  render();
+};
 </script>
 </body>
 </html>
